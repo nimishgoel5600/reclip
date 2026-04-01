@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: reclip
+    runtime: docker
+    repo: https://github.com/nimishgoel5600/reclip
+    branch: main
+    plan: free
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: HOST
+        value: 0.0.0.0
+      - key: PORT
+        value: "10000"
+    healthCheckPath: /health

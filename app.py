@@ -77,6 +77,27 @@ _cleanup_thread.start()
 
 
 # ---------------------------------------------------------------------------
+# Self-ping to prevent free-tier hosting from sleeping
+# ---------------------------------------------------------------------------
+def _keep_alive():
+    import urllib.request
+    app_url = os.environ.get("RENDER_EXTERNAL_URL")
+    if not app_url:
+        return  # only run on Render
+    health_url = f"{app_url}/health"
+    log.info("Keep-alive enabled: pinging %s every 5 min", health_url)
+    while True:
+        time.sleep(290)  # ~5 min
+        try:
+            urllib.request.urlopen(health_url, timeout=10)
+        except Exception:
+            pass
+
+_keepalive_thread = threading.Thread(target=_keep_alive, daemon=True)
+_keepalive_thread.start()
+
+
+# ---------------------------------------------------------------------------
 # Secure filename helper
 # ---------------------------------------------------------------------------
 def safe_filename(title, ext):
