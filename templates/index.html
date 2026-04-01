@@ -537,18 +537,95 @@
       line-height: 1.8;
     }
 
-    /* Cookie hint */
-    .cookie-hint {
+    /* Cookie panel */
+    .cookie-panel {
       margin-top: 16px;
-      padding: 10px 14px;
+      padding: 14px 18px;
       background: var(--card);
-      border: 1px dashed var(--card-border);
+      border: 1.5px solid var(--card-border);
+      border-radius: var(--radius);
+    }
+    .cookie-panel summary {
+      font-size: 0.74rem;
+      color: var(--fg);
+      cursor: pointer;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+      user-select: none;
+      list-style: none;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .cookie-panel summary::-webkit-details-marker { display: none; }
+    .cookie-panel summary .arrow {
+      transition: transform 0.2s;
+      font-size: 0.6rem;
+    }
+    .cookie-panel[open] summary .arrow { transform: rotate(90deg); }
+    .cookie-panel .cookie-status {
+      margin-left: auto;
+      font-size: 0.65rem;
+      padding: 2px 8px;
+      border-radius: 4px;
+    }
+    .cookie-status.active { background: var(--success); color: #fff; }
+    .cookie-status.inactive { background: var(--card-border); color: var(--muted); }
+    .cookie-body {
+      margin-top: 12px;
+    }
+    .cookie-body p {
+      font-size: 0.68rem;
+      color: var(--muted);
+      line-height: 1.6;
+      margin-bottom: 10px;
+    }
+    .cookie-body textarea {
+      width: 100%;
+      min-height: 80px;
+      padding: 10px 12px;
+      font-size: 0.7rem;
+      border: 1.5px solid var(--card-border);
       border-radius: 8px;
+      background: var(--bg);
+      color: var(--fg);
+      font-family: 'DM Mono', monospace;
+      resize: vertical;
+    }
+    .cookie-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 8px;
+    }
+    .cookie-actions button {
+      padding: 7px 16px;
+      border: none;
+      border-radius: 7px;
+      font-family: 'DM Mono', monospace;
+      font-size: 0.7rem;
+      cursor: pointer;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      transition: opacity 0.2s;
+    }
+    .cookie-actions button:hover { opacity: 0.85; }
+    .cookie-save { background: var(--accent); color: #fff; }
+    .cookie-remove { background: var(--card-border); color: var(--fg); }
+    .cookie-msg {
+      font-size: 0.68rem;
+      margin-top: 6px;
+      min-height: 18px;
+    }
+    .cookie-msg.ok { color: var(--success); }
+    .cookie-msg.err { color: var(--error); }
+    .cookie-steps {
       font-size: 0.66rem;
       color: var(--muted);
-      line-height: 1.5;
+      line-height: 1.8;
+      margin-top: 6px;
+      padding-left: 16px;
     }
-    .cookie-hint code {
+    .cookie-steps code {
       background: var(--bg);
       padding: 1px 5px;
       border-radius: 3px;
@@ -646,10 +723,30 @@
       <p style="margin-top:8px">and <strong>1900+</strong> more sites</p>
     </div>
 
-    <div class="cookie-hint">
-      For age-restricted or private videos, place a <code>cookies.txt</code> file in the project root.
-      Export cookies from your browser using a browser extension (Netscape format).
-    </div>
+    <details class="cookie-panel" id="cookiePanel">
+      <summary>
+        <span class="arrow">&#9654;</span>
+        YouTube not working? Upload Cookies
+        <span class="cookie-status" id="cookieStatus"></span>
+      </summary>
+      <div class="cookie-body">
+        <p>YouTube blocks datacenter IPs. Upload your browser cookies to authenticate.</p>
+        <ol class="cookie-steps">
+          <li>Install a cookie export extension (search <code>cookies.txt</code> in your browser's extension store)</li>
+          <li>Go to <strong>youtube.com</strong> and make sure you're logged in</li>
+          <li>Click the extension and export/copy cookies for youtube.com</li>
+          <li>Paste the contents below and click <strong>Save</strong></li>
+        </ol>
+        <textarea id="cookieText" placeholder="# Netscape HTTP Cookie File&#10;.youtube.com&#9;TRUE&#9;/&#9;TRUE&#9;0&#9;COOKIE_NAME&#9;COOKIE_VALUE"></textarea>
+        <div class="cookie-actions">
+          <button class="cookie-save" onclick="saveCookies()">Save Cookies</button>
+          <button class="cookie-remove" onclick="removeCookies()">Remove</button>
+          <input type="file" id="cookieFile" accept=".txt" style="display:none" onchange="loadCookieFile(event)">
+          <button class="cookie-remove" onclick="document.getElementById('cookieFile').click()">Upload File</button>
+        </div>
+        <div class="cookie-msg" id="cookieMsg"></div>
+      </div>
+    </details>
 
     <div class="footer">
       ReClip &middot; Powered by yt-dlp &middot; Open Source
@@ -1014,6 +1111,71 @@
       await Promise.all(promises);
 
       if (btn) { btn.disabled = false; btn.textContent = 'Download All'; }
+    }
+
+    // ---- Cookies ----
+    async function checkCookieStatus() {
+      try {
+        const res = await fetch('/api/cookies/status');
+        const data = await res.json();
+        const el = document.getElementById('cookieStatus');
+        if (data.has_cookies) {
+          el.textContent = 'ACTIVE';
+          el.className = 'cookie-status active';
+        } else {
+          el.textContent = 'NOT SET';
+          el.className = 'cookie-status inactive';
+        }
+      } catch {}
+    }
+    checkCookieStatus();
+
+    async function saveCookies() {
+      const text = document.getElementById('cookieText').value.trim();
+      const msg = document.getElementById('cookieMsg');
+      if (!text) { msg.textContent = 'Paste your cookies first'; msg.className = 'cookie-msg err'; return; }
+      try {
+        const res = await fetch('/api/cookies', {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain' },
+          body: text,
+        });
+        const data = await res.json();
+        if (data.ok) {
+          msg.textContent = data.message;
+          msg.className = 'cookie-msg ok';
+          checkCookieStatus();
+        } else {
+          msg.textContent = data.error || 'Failed to save';
+          msg.className = 'cookie-msg err';
+        }
+      } catch (e) {
+        msg.textContent = 'Error: ' + e.message;
+        msg.className = 'cookie-msg err';
+      }
+    }
+
+    async function removeCookies() {
+      try {
+        await fetch('/api/cookies', { method: 'DELETE' });
+        document.getElementById('cookieText').value = '';
+        document.getElementById('cookieMsg').textContent = 'Cookies removed';
+        document.getElementById('cookieMsg').className = 'cookie-msg ok';
+        checkCookieStatus();
+      } catch {}
+    }
+
+    function loadCookieFile(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        document.getElementById('cookieText').value = e.target.result;
+        document.getElementById('cookieMsg').textContent = 'File loaded — click Save to apply';
+        document.getElementById('cookieMsg').className = 'cookie-msg ok';
+      };
+      reader.readAsText(file);
+      event.target.value = '';
     }
   </script>
 </body>

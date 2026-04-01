@@ -18,17 +18,10 @@ JOB_TTL = 3600  # seconds before completed jobs are cleaned up
 MAX_FILE_SIZE = "2G"  # yt-dlp max file size limit
 DOWNLOAD_TIMEOUT = 600  # 10 min per download
 
-# Common yt-dlp flags for headless server environments
-YT_DLP_BASE = [
-    "yt-dlp",
-    "--no-warnings",
-    "--no-check-certificates",
-    "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-    "--extractor-args", "youtube:player_client=web,mediaconnect",
-]
-
 app = Flask(__name__)
-DOWNLOAD_DIR = os.path.join(os.path.dirname(__file__), "downloads")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DOWNLOAD_DIR = os.path.join(BASE_DIR, "downloads")
+COOKIE_PATH = os.path.join(BASE_DIR, "cookies.txt")
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -37,6 +30,21 @@ log = logging.getLogger("reclip")
 jobs = {}
 jobs_lock = threading.Lock()
 executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
+
+
+def _build_cmd():
+    """Build base yt-dlp command with cookie support."""
+    cmd = [
+        "yt-dlp",
+        "--no-warnings",
+        "--no-check-certificates",
+        "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        "--extractor-args", "youtube:player_client=android,web",
+    ]
+    if os.path.isfile(COOKIE_PATH):
+        cmd += ["--cookies", COOKIE_PATH]
+    return cmd
+
 
 # ---------------------------------------------------------------------------
 # Simple rate limiter (per IP)
@@ -137,7 +145,7 @@ def run_download(job_id, url, format_choice, format_id, subtitles, playlist):
     else:
         out_template = os.path.join(DOWNLOAD_DIR, f"{job_id}.%(ext)s")
 
-    cmd = YT_DLP_BASE + ["-o", out_template, "--max-filesize", MAX_FILE_SIZE]
+    cmd = _build_cmd() + ["-o", out_template, "--max-filesize", MAX_FILE_SIZE]
 
     if not playlist:
         cmd.append("--no-playlist")
@@ -157,11 +165,6 @@ def run_download(job_id, url, format_choice, format_id, subtitles, playlist):
     # Subtitles
     if subtitles:
         cmd += ["--write-subs", "--write-auto-subs", "--sub-lang", "en", "--embed-subs"]
-
-    # Cookie file support
-    cookie_path = os.path.join(os.path.dirname(__file__), "cookies.txt")
-    if os.path.isfile(cookie_path):
-        cmd += ["--cookies", cookie_path]
 
     # Retry & network resilience
     cmd += ["--retries", "3", "--fragment-retries", "3"]
@@ -246,7 +249,8 @@ def run_download(job_id, url, format_choice, format_id, subtitles, playlist):
 # ---------------------------------------------------------------------------
 @app.route("/")
 def index():
-    return render_template("index.html")
+    has_cookies = os.path.isfile(COOKIE_PATH)
+    return render_template("index.html", has_cookies=has_cookies)
 
 
 @app.route("/health")
@@ -264,12 +268,7 @@ def get_info():
     if not url:
         return jsonify({"error": "No URL provided"}), 400
 
-    cmd = YT_DLP_BASE + ["--no-playlist", "-j", url]
-
-    # Cookie file support
-    cookie_path = os.path.join(os.path.dirname(__file__), "cookies.txt")
-    if os.path.isfile(cookie_path):
-        cmd += ["--cookies", cookie_path]
+    cmd = _build_cmd() + ["--no-playlist", "-j", url]
 
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
@@ -391,22 +390,39 @@ def download_file(job_id):
     return send_file(real_path, as_attachment=True, download_name=job.get("filename", "download"))
 
 
-@app.route("/api/supported")
-def supported_sites():
-    """Return a list of popular supported sites for the UI."""
-    sites = [
-        {"name": "YouTube", "icon": "yt"}, {"name": "TikTok", "icon": "tt"},
-        {"name": "Instagram", "icon": "ig"}, {"name": "Twitter/X", "icon": "tw"},
-        {"name": "Reddit", "icon": "rd"}, {"name": "Facebook", "icon": "fb"},
-        {"name": "Vimeo", "icon": "vm"}, {"name": "Twitch", "icon": "twi"},
-        {"name": "Dailymotion", "icon": "dm"}, {"name": "SoundCloud", "icon": "sc"},
-        {"name": "Loom", "icon": "lm"}, {"name": "Streamable", "icon": "st"},
-        {"name": "Pinterest", "icon": "pt"}, {"name": "Tumblr", "icon": "tu"},
-        {"name": "Threads", "icon": "th"}, {"name": "LinkedIn", "icon": "li"},
-        {"name": "Bilibili", "icon": "bl"}, {"name": "Bandcamp", "icon": "bc"},
-        {"name": "Spotify", "icon": "sp"}, {"name": "Snapchat", "icon": "sn"},
-    ]
-    return jsonify({"sites": sites, "total": "1900+"})
+@app.route("/api/cookies", methods=["POST"])
+def upload_cookies():
+    """Upload cookies.txt from the browser for YouTube/other auth."""
+    text = request.get_data(as_text=True)
+    if not text or len(text) < 10:
+        return jsonify({"error": "Empty or invalid cookie data"}), 400
+    if len(text) > 500_000:
+        return jsonify({"error": "Cookie file too large"}), 400
+
+    # Basic validation: Netscape cookie format starts with comments or domain
+    lines = text.strip().split("\n")
+    valid = any(l.strip().startswith(("#", ".")) or "\t" in l for l in lines[:5])
+    if not valid:
+        return jsonify({"error": "Invalid format — must be Netscape cookie format (cookies.txt)"}), 400
+
+    with open(COOKIE_PATH, "w") as f:
+        f.write(text)
+
+    log.info("Cookies uploaded (%d bytes)", len(text))
+    return jsonify({"ok": True, "message": "Cookies saved — YouTube should work now"})
+
+
+@app.route("/api/cookies", methods=["DELETE"])
+def delete_cookies():
+    """Remove uploaded cookies."""
+    if os.path.isfile(COOKIE_PATH):
+        os.remove(COOKIE_PATH)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/cookies/status")
+def cookies_status():
+    return jsonify({"has_cookies": os.path.isfile(COOKIE_PATH)})
 
 
 if __name__ == "__main__":
