@@ -158,7 +158,13 @@ def run_download(job_id, url, format_choice, format_id, subtitles, playlist):
     elif format_choice == "audio-flac":
         cmd += ["-x", "--audio-format", "flac"]
     elif format_id:
-        cmd += ["-f", f"{format_id}+bestaudio/best", "--merge-output-format", "mp4"]
+        # format_id can be a height like "1080" or an actual format ID
+        # Use height-based selection for reliability across player clients
+        if format_id.isdigit() and int(format_id) <= 4320:
+            h = format_id
+            cmd += ["-f", f"bestvideo[height<={h}]+bestaudio/best[height<={h}]/best", "--merge-output-format", "mp4"]
+        else:
+            cmd += ["-f", f"{format_id}+bestaudio/{format_id}/best", "--merge-output-format", "mp4"]
     else:
         cmd += ["-f", "bestvideo+bestaudio/best", "--merge-output-format", "mp4"]
 
@@ -291,7 +297,7 @@ def get_info():
         for height, f in best_by_height.items():
             size_mb = round((f.get("filesize") or f.get("filesize_approx") or 0) / 1048576, 1)
             formats.append({
-                "id": f["format_id"],
+                "id": str(height),  # use height as ID for cross-client reliability
                 "label": f"{height}p",
                 "height": height,
                 "size": f"{size_mb}MB" if size_mb else "",
