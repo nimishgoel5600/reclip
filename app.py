@@ -18,6 +18,15 @@ JOB_TTL = 3600  # seconds before completed jobs are cleaned up
 MAX_FILE_SIZE = "2G"  # yt-dlp max file size limit
 DOWNLOAD_TIMEOUT = 600  # 10 min per download
 
+# Common yt-dlp flags for headless server environments
+YT_DLP_BASE = [
+    "yt-dlp",
+    "--no-warnings",
+    "--no-check-certificates",
+    "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "--extractor-args", "youtube:player_client=web,mediaconnect",
+]
+
 app = Flask(__name__)
 DOWNLOAD_DIR = os.path.join(os.path.dirname(__file__), "downloads")
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
@@ -128,7 +137,7 @@ def run_download(job_id, url, format_choice, format_id, subtitles, playlist):
     else:
         out_template = os.path.join(DOWNLOAD_DIR, f"{job_id}.%(ext)s")
 
-    cmd = ["yt-dlp", "-o", out_template, "--max-filesize", MAX_FILE_SIZE]
+    cmd = YT_DLP_BASE + ["-o", out_template, "--max-filesize", MAX_FILE_SIZE]
 
     if not playlist:
         cmd.append("--no-playlist")
@@ -255,7 +264,7 @@ def get_info():
     if not url:
         return jsonify({"error": "No URL provided"}), 400
 
-    cmd = ["yt-dlp", "--no-playlist", "-j", url]
+    cmd = YT_DLP_BASE + ["--no-playlist", "-j", url]
 
     # Cookie file support
     cookie_path = os.path.join(os.path.dirname(__file__), "cookies.txt")
